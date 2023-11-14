@@ -15,6 +15,13 @@ from tinygrad.helpers import dtypes
 from tinygrad.nn import Linear, Conv2d
 from tinygrad.tensor import Tensor
 
+
+def zero_module(module):
+    module.weight = Tensor.zeros_like(module.weight)
+    module.bias = Tensor.zeros_like(module.bias)
+    return module
+    
+
 class ControlledUNetModel(UNetModel):
     '''
     Tinygrad SD controlled UNet.
@@ -23,7 +30,7 @@ class ControlledUNetModel(UNetModel):
     https://github.com/tinygrad/tinygrad/blob/master/examples/stable_diffusion.py
     '''
     
-    def __call__(self, x, timesteps=None, context=None, control=None, only_mid_control=False, **kwargs):
+    def __call__(self, x, timesteps=None, context=None, control=None, only_mid_control=False):
         # (stable_diffusion.py) TODO: real time embedding
         t_emb = timestep_embedding(timesteps, 320)
         emb = t_emb.sequential(self.time_embed)
@@ -136,6 +143,7 @@ class ControlNetModel:
     ):
         
         num_attention_heads = num_attention_heads or attention_head_dim
+        self.block_out_channels = block_out_channels
 
         # Check inputs
         if len(block_out_channels) != len(down_block_types):
@@ -185,7 +193,7 @@ class ControlNetModel:
         )
 
         self.down_blocks = []
-        self.controlnet_down_blocks = []
+        self.controlnet_down_zero_conv = []
 
         if isinstance(only_cross_attention, bool):
             only_cross_attention = [only_cross_attention] * len(down_block_types)
@@ -199,9 +207,9 @@ class ControlNetModel:
         # down
         output_channel = block_out_channels[0]
 
-        controlnet_block = Conv2d(output_channel, output_channel, kernel_size=1)
-        controlnet_block = zero_module(controlnet_block)
-        self.controlnet_down_blocks.append(controlnet_block)
+        # controlnet_block = Conv2d(output_channel, output_channel, kernel_size=1)
+        # controlnet_block = zero_module(controlnet_block)
+        # self.controlnet_down_zero_conv.append(controlnet_block)
 
         for i, down_block_type in enumerate(down_block_types):
             input_channel = output_channel
@@ -225,19 +233,19 @@ class ControlNetModel:
             for _ in range(layers_per_block):
                 controlnet_block = Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
-                self.controlnet_down_blocks.append(controlnet_block)
+                self.controlnet_down_zero_conv.append(controlnet_block)
 
             if not is_final_block:
                 controlnet_block = Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
-                self.controlnet_down_blocks.append(controlnet_block)
+                self.controlnet_down_zero_conv.append(controlnet_block)
 
         # mid
         mid_block_channel = block_out_channels[-1]
 
         controlnet_block = Conv2d(mid_block_channel, mid_block_channel, kernel_size=1)
         controlnet_block = zero_module(controlnet_block)
-        self.controlnet_mid_block = controlnet_block
+        self.controlnet_mid_zero_conv = controlnet_block
 
         self.mid_block = UNetMidBlock2DCrossAttn(
             in_channels=mid_block_channel,
@@ -246,11 +254,52 @@ class ControlNetModel:
             num_attention_heads=num_attention_heads[-1],
             cross_attention_dim=cross_attention_dim
         )
+         
+    def __call__(self, sample, control, timesteps, encoder_hidden_states, conditioning_scale=1.0):
+        '''
+        Args:
+        - sample: 4x64x64 image latent
+        - control: image conditioning
+        - timesteps: timestep of the current iteration
+        - encoder_hidden_states: prompt encoding
+        '''
+        t_emb = timestep_embedding(timesteps, self.block_out_channels[0])
+        emb = t_emb.sequential(self.time_embed)
         
+        sample = self.conv_in(sample)
+        sample += self.controlnet_cond_embedding(control)
         
-def zero_module(module):
-    module.weight = Tensor.zeros_like(module.weight)
-    module.bias = Tensor.zeros_like(module.bias)
+        # TODO: look into context incorporation
+        outputs = []
+
+        for downsample_block, zero_conv in zip(self.down_blocks, self.controlnet_down_zero_conv):
+            if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
+                sample, res_samples = downsample_block(
+                    hidden_states=sample,
+                    temb=emb,
+                    encoder_hidden_states=encoder_hidden_states
+                )
+            else:
+                sample, res_samples = downsample_block(hidden_states=sample, temb=emb)
+
+            outputs.append(zero_conv(sample))
+
+        # 4. mid
+        if self.mid_block is not None:
+            sample = self.mid_block(
+                sample,
+                emb,
+                encoder_hidden_states=encoder_hidden_states
+            )
+            
+        # 5. scale
+        mid_block_res_sample = self.controlnet_mid_zero_conv(sample)
+        outputs.append(mid_block_res_sample)
+        # 6. scaling
+        outputs = [x * conditioning_scale for x in outputs]
+        
+        return outputs
+        
     
 def get_down_block(
     down_block_type: str,
@@ -390,8 +439,6 @@ class CrossAttnDownBlock2D:
         else:
             self.downsamplers = None
 
-        self.gradient_checkpointing = False
-
     def __call__(
         self,
         hidden_states,
@@ -490,8 +537,69 @@ class UNetMidBlock2DCrossAttn:
 
         
 
-# class ControlledStableDiffusion(StableDiffusion):
+class ControlledStableDiffusion(StableDiffusion):
     
-#     def __init__(self):
-#         super().__init__()
-#         self.model = namedtuple("ControlledDiffusionModel", ["diffusion_model"])(diffusion_model=ControlledUNetModel())
+    def __init__(self, diffusion_model, controlnet):
+        super().__init__()
+        self.alphas_cumprod = diffusion_model.alphas_cumprod
+        self.model = diffusion_model.model
+        self.first_stage_model = diffusion_model.first_stage_model
+        self.cond_stage_model = diffusion_model.cond_stage_model
+        
+        self.controlnet = controlnet
+        
+    def get_model_output(
+        self, 
+        control,
+        unconditional_context,
+        context,
+        latent,
+        timestep, 
+        unconditional_guidance_scale,
+        conditioning_scale):
+        
+        context = unconditional_context.cat(context, dim=0)
+        
+        control = self.controlnet(
+            latent, 
+            control,
+            timestep,
+            context,
+            conditioning_scale
+        )
+        
+        latents = self.model.diffusion_model(latent.expand(2, *latent.shape[1:]), timestep, context, control)
+        unconditional_latent, latent = latents[0:1], latents[1:2]
+        
+        e_t = unconditional_latent + unconditional_guidance_scale * (latent - unconditional_latent)
+        
+        return e_t
+    
+    def __call__(
+        self, 
+        control,
+        unconditional_context, 
+        context, 
+        latent, 
+        timestep, 
+        alphas, 
+        alphas_prev, 
+        guidance,
+        conditioning_scale):
+        
+        '''
+        Args:
+        - unconditional_context: CLIP embedding of the unconditional prompt
+        - context: CLIP embedding of the prompt
+        - latent: 4x64x64 image latent tensor
+        - timestep: timestep of the current iteration
+        - guidance: scale of unconditional guidance
+        - conditioning_scale: scale of image conditioning
+        '''
+        
+        e_t = self.get_model_output(control, unconditional_context, context, latent, timestep, guidance, conditioning_scale)
+        x_prev, _ = self.get_x_prev_and_pred_x0(latent, e_t, alphas, alphas_prev)
+        
+        return x_prev.realize()
+        
+        
