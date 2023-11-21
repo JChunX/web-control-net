@@ -51,7 +51,7 @@ class ControlledUNetModel(UNetModel):
         for bb in self.middle_block:
             x = run(x, bb)
         
-        if control is not None:
+        if control is not None: # middle control
             x += control.pop()
         
         for b in self.output_blocks:
@@ -193,7 +193,7 @@ class ControlNetModel:
         )
 
         self.down_blocks = []
-        self.controlnet_down_zero_conv = []
+        self.controlnet_down_zero_conv = [] # TODO: rename to match state_dict
 
         if isinstance(only_cross_attention, bool):
             only_cross_attention = [only_cross_attention] * len(down_block_types)
@@ -207,10 +207,12 @@ class ControlNetModel:
         # down
         output_channel = block_out_channels[0]
 
-        # controlnet_block = Conv2d(output_channel, output_channel, kernel_size=1)
-        # controlnet_block = zero_module(controlnet_block)
-        # self.controlnet_down_zero_conv.append(controlnet_block)
+        controlnet_block = Conv2d(output_channel, output_channel, kernel_size=1)
+        controlnet_block = zero_module(controlnet_block)
+        self.controlnet_down_zero_conv.append(controlnet_block)
 
+        # TODO down block forward incorrect
+        # see diffusers/models/controlnet.py, line 780 
         for i, down_block_type in enumerate(down_block_types):
             input_channel = output_channel
             output_channel = block_out_channels[i]
@@ -222,7 +224,7 @@ class ControlNetModel:
                 in_channels=input_channel,
                 out_channels=output_channel,
                 temb_channels=time_embed_dim,
-                add_downsample=not is_final_block,
+                add_downsample=True,# is_final_block,
                 transformer_layers_per_block=transformer_layers_per_block[i],
                 num_attention_heads=num_attention_heads[i],
                 cross_attention_dim=cross_attention_dim,
@@ -230,12 +232,14 @@ class ControlNetModel:
             )
             self.down_blocks.append(down_block)
 
-            for _ in range(layers_per_block):
+            for _ in range(layers_per_block): 
+                # zero conv for each layer in block
                 controlnet_block = Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_down_zero_conv.append(controlnet_block)
 
-            if not is_final_block:
+            if not is_final_block: 
+                # zero conv for Downsample block
                 controlnet_block = Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
                 self.controlnet_down_zero_conv.append(controlnet_block)
@@ -270,9 +274,9 @@ class ControlNetModel:
         sample += self.controlnet_cond_embedding(control)
         
         # TODO: look into context incorporation
-        outputs = []
+        down_outputs = (sample,)
 
-        for downsample_block, zero_conv in zip(self.down_blocks, self.controlnet_down_zero_conv):
+        for downsample_block in self.down_blocks:
             if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
                 sample, res_samples = downsample_block(
                     hidden_states=sample,
@@ -281,8 +285,7 @@ class ControlNetModel:
                 )
             else:
                 sample, res_samples = downsample_block(hidden_states=sample, temb=emb)
-
-            outputs.append(zero_conv(sample))
+            down_outputs += res_samples
 
         # 4. mid
         if self.mid_block is not None:
@@ -292,9 +295,15 @@ class ControlNetModel:
                 encoder_hidden_states=encoder_hidden_states
             )
             
-        # 5. scale
+        # 5. zero convs
+        outputs = []
+        
+        for sample, zero_conv in zip(down_outputs, self.controlnet_down_zero_conv):
+            outputs.append(zero_conv(sample))
+        
         mid_block_res_sample = self.controlnet_mid_zero_conv(sample)
         outputs.append(mid_block_res_sample)
+        
         # 6. scaling
         outputs = [x * conditioning_scale for x in outputs]
         
@@ -367,7 +376,7 @@ class DownBlock2D:
                 )
             )
 
-        self.resnets = []
+        self.resnets = resnets
 
         if add_downsample:
             self.downsamplers = [
@@ -428,6 +437,7 @@ class CrossAttnDownBlock2D:
                     cross_attention_dim,
                     num_attention_heads,
                     out_channels // num_attention_heads,
+                    num_layers=transformer_layers_per_block[i],
                 )
             )
             
@@ -454,8 +464,8 @@ class CrossAttnDownBlock2D:
             hidden_states = resnet(hidden_states, temb)
             hidden_states = attn(
                 hidden_states,
-                encoder_hidden_states=encoder_hidden_states,
-            )[0]
+                context=encoder_hidden_states,
+            )
 
             output_states = output_states + (hidden_states,)
 
@@ -529,8 +539,8 @@ class UNetMidBlock2DCrossAttn:
         for attn, resnet in zip(self.attentions, self.resnets[1:]):
             hidden_states = attn(
                 hidden_states,
-                encoder_hidden_states=encoder_hidden_states,
-            )[0]
+                context=encoder_hidden_states,
+            )
             hidden_states = resnet(hidden_states, temb)
 
         return hidden_states
