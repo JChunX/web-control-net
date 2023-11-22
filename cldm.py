@@ -7,12 +7,10 @@ from tinygrad.examples.stable_diffusion import (
     StableDiffusion,
     ResBlock,
     SpatialTransformer,
-    Downsample,
-    SpatialTransformer,
     timestep_embedding,
 )
 from tinygrad.helpers import dtypes
-from tinygrad.nn import Linear, Conv2d
+from tinygrad.nn import GroupNorm, Linear, Conv2d
 from tinygrad.tensor import Tensor
 
 
@@ -114,7 +112,37 @@ class ControlNetConditioningEmbedding:
         embedding = self.conv_out(embedding)
         
         return embedding
+    
 
+class ControlResBlock:
+    def __init__(self, channels, emb_channels, out_channels):
+
+        self.norm1 = GroupNorm(32, channels)
+        self.conv1 = Conv2d(channels, out_channels, 3, padding=1)
+        
+        self.time_emb_proj = Linear(emb_channels, out_channels) ######
+        
+        self.norm2 = GroupNorm(32, out_channels)
+        self.conv2 = Conv2d(out_channels, out_channels, 3, padding=1)
+        
+        self.conv_shortcut = Conv2d(channels, out_channels, 1) if channels != out_channels else lambda x: x
+
+    def __call__(self, x, emb):
+        
+        h = self.conv1(Tensor.silu(self.norm1(x)))
+        emb_out = self.time_emb_proj(Tensor.silu(emb))
+        h = h + emb_out.reshape(*emb_out.shape, 1, 1)
+        h = self.conv2(Tensor.silu(self.norm2(h)))
+        ret = self.conv_shortcut(x) + h
+
+        return ret
+
+class ControlDownsample:
+  def __init__(self, channels):
+    self.conv = Conv2d(channels, channels, 3, stride=2, padding=1)
+
+  def __call__(self, x):
+    return self.conv(x)
     
 class ControlNetModel:
     '''
@@ -173,14 +201,12 @@ class ControlNetModel:
 
         # time
         # (stable_diffusion.py) TODO: real time embedding
+        # TODO WARNING: not loading time_embedding.0.weight
         time_embed_dim = block_out_channels[0] * 4
         
-        self.time_embed = [
-            Linear(block_out_channels[0], time_embed_dim),
-            Tensor.silu,
-            Linear(time_embed_dim, time_embed_dim),
-        ]
-
+        # time_embedding.linear_1 and 
+        # time_embedding.linear_2 are Linear()
+        self.time_embedding = namedtuple("TimeEmbedding", ["linear_1", "linear_2"])(Linear(block_out_channels[0], time_embed_dim), Linear(time_embed_dim, time_embed_dim))
 
         self.encoder_hid_proj = None
         self.class_embedding = None
@@ -193,7 +219,7 @@ class ControlNetModel:
         )
 
         self.down_blocks = []
-        self.controlnet_down_zero_conv = [] # TODO: rename to match state_dict
+        self.controlnet_down_blocks = [] # zero convs
 
         if isinstance(only_cross_attention, bool):
             only_cross_attention = [only_cross_attention] * len(down_block_types)
@@ -209,9 +235,8 @@ class ControlNetModel:
 
         controlnet_block = Conv2d(output_channel, output_channel, kernel_size=1)
         controlnet_block = zero_module(controlnet_block)
-        self.controlnet_down_zero_conv.append(controlnet_block)
+        self.controlnet_down_blocks.append(controlnet_block)
 
-        # TODO down block forward incorrect
         # see diffusers/models/controlnet.py, line 780 
         for i, down_block_type in enumerate(down_block_types):
             input_channel = output_channel
@@ -224,7 +249,7 @@ class ControlNetModel:
                 in_channels=input_channel,
                 out_channels=output_channel,
                 temb_channels=time_embed_dim,
-                add_downsample=True,# is_final_block,
+                add_downsample=not is_final_block,
                 transformer_layers_per_block=transformer_layers_per_block[i],
                 num_attention_heads=num_attention_heads[i],
                 cross_attention_dim=cross_attention_dim,
@@ -236,20 +261,20 @@ class ControlNetModel:
                 # zero conv for each layer in block
                 controlnet_block = Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
-                self.controlnet_down_zero_conv.append(controlnet_block)
+                self.controlnet_down_blocks.append(controlnet_block)
 
             if not is_final_block: 
-                # zero conv for Downsample block
+                # zero conv for ControlDownsample block
                 controlnet_block = Conv2d(output_channel, output_channel, kernel_size=1)
                 controlnet_block = zero_module(controlnet_block)
-                self.controlnet_down_zero_conv.append(controlnet_block)
+                self.controlnet_down_blocks.append(controlnet_block)
 
         # mid
         mid_block_channel = block_out_channels[-1]
 
         controlnet_block = Conv2d(mid_block_channel, mid_block_channel, kernel_size=1)
         controlnet_block = zero_module(controlnet_block)
-        self.controlnet_mid_zero_conv = controlnet_block
+        self.controlnet_mid_block = controlnet_block
 
         self.mid_block = UNetMidBlock2DCrossAttn(
             in_channels=mid_block_channel,
@@ -268,12 +293,11 @@ class ControlNetModel:
         - encoder_hidden_states: prompt encoding
         '''
         t_emb = timestep_embedding(timesteps, self.block_out_channels[0])
-        emb = t_emb.sequential(self.time_embed)
+        emb = self.time_embedding.linear_2(Tensor.silu(self.time_embedding.linear_1(t_emb)))
         
         sample = self.conv_in(sample)
         sample += self.controlnet_cond_embedding(control)
         
-        # TODO: look into context incorporation
         down_outputs = (sample,)
 
         for downsample_block in self.down_blocks:
@@ -298,10 +322,10 @@ class ControlNetModel:
         # 5. zero convs
         outputs = []
         
-        for sample, zero_conv in zip(down_outputs, self.controlnet_down_zero_conv):
+        for sample, zero_conv in zip(down_outputs, self.controlnet_down_blocks):
             outputs.append(zero_conv(sample))
         
-        mid_block_res_sample = self.controlnet_mid_zero_conv(sample)
+        mid_block_res_sample = self.controlnet_mid_block(sample)
         outputs.append(mid_block_res_sample)
         
         # 6. scaling
@@ -369,7 +393,7 @@ class DownBlock2D:
         for i in range(num_layers):
             in_channels = in_channels if i == 0 else out_channels
             resnets.append(
-                ResBlock(
+                ControlResBlock(
                     channels=in_channels,
                     emb_channels=temb_channels,
                     out_channels=out_channels
@@ -380,7 +404,7 @@ class DownBlock2D:
 
         if add_downsample:
             self.downsamplers = [
-                    Downsample(out_channels)
+                    ControlDownsample(out_channels)
                 ]
         else:
             self.downsamplers = None
@@ -425,7 +449,7 @@ class CrossAttnDownBlock2D:
         for i in range(num_layers):
             in_channels = in_channels if i == 0 else out_channels
             resnets.append(
-                ResBlock(
+                ControlResBlock(
                     channels=in_channels,
                     emb_channels=temb_channels,
                     out_channels=out_channels,
@@ -445,7 +469,7 @@ class CrossAttnDownBlock2D:
         self.resnets = resnets
 
         if add_downsample:
-            self.downsamplers = [Downsample(out_channels)]
+            self.downsamplers = [ControlDownsample(out_channels)]
         else:
             self.downsamplers = None
 
@@ -499,9 +523,9 @@ class UNetMidBlock2DCrossAttn:
 
         # there is always at least one resnet
         resnets = [
-            ResBlock(
+            ControlResBlock(
                 channels=in_channels,
-                emb_channels=temb_channels,               
+                emb_channels=temb_channels,
                 out_channels=in_channels,
             )
         ]
@@ -518,7 +542,7 @@ class UNetMidBlock2DCrossAttn:
             )
                 
             resnets.append(
-                ResBlock(
+                ControlResBlock(
                     channels=in_channels,
                     emb_channels=temb_channels,
                     out_channels=in_channels,
