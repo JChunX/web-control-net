@@ -2,7 +2,7 @@
 from collections import namedtuple
 from typing import Optional, Tuple, Union
 
-from tinygrad.examples.stable_diffusion import (
+from examples.stable_diffusion import (
     UNetModel,
     StableDiffusion,
     ResBlock,

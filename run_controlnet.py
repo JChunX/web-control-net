@@ -1,6 +1,6 @@
 import os
-# os.environ['DEBUG'] = '2'
-from examples.stable_diffusion import *
+os.environ['DEBUG'] = '2'
+from tinygrad.examples.stable_diffusion import *
 from tinygrad.nn.state import load_state_dict, torch_load
 from tinygrad.ops import Device
 
@@ -28,7 +28,7 @@ canny_image = Image.fromarray(image)
 Device.DEFAULT = "WEBGPU"
 
 FILENAME_DIFFUSION = Path(os.path.abspath('')) / "weights/sd-v1-4.ckpt"
-download_file('https://huggingface.co/CompVis/stable-diffusion-v-1-5-original/resolve/main/sd-v1-5.ckpt', FILENAME_DIFFUSION)
+download_file('https://huggingface.co/CompVis/stable-diffusion-v-1-4-original/resolve/main/sd-v1-4.ckpt', FILENAME_DIFFUSION)
 state_dict_diffusion = torch_load(FILENAME_DIFFUSION)["state_dict"]
 diffusion_model = StableDiffusion()
 diffusion_model.model = namedtuple("DiffusionModel", ["diffusion_model"])(diffusion_model=ControlledUNetModel())
@@ -39,7 +39,7 @@ download_file('https://huggingface.co/lllyasviel/sd-controlnet-canny/resolve/mai
 state_dict_controlnet = torch_load(FILENAME_CONTROLNET)
 
 controlnet = ControlNetModel(cross_attention_dim=768)
-
+# somehow loading "first_stage_model.encoder.conv_in.weight" fails
 load_state_dict(controlnet, state_dict_controlnet, strict=False)
 
 model = ControlledStableDiffusion(diffusion_model, controlnet)
@@ -78,23 +78,20 @@ canny_condition = Tensor(canny_condition).unsqueeze(0)
 guidance = 7.5
 
 
-@TinyJit
+# @TinyJit
 def run(model, *x): return model(*x).realize()
 
 timing = True
 
-with Context(BEAM=getenv("LATEBEAM")):
-    for index, timestep in (t:=tqdm(list(enumerate(timesteps))[::-1])):
-        GlobalCounters.reset()
-        t.set_description("%3d %3d" % (index, timestep))
-        with Timing("step in ", enabled=timing, on_exit=lambda _: f", using {GlobalCounters.mem_used/1e9:.2f} GB"):
-            tid = Tensor([index])
-            latent = run(model, canny_condition, unconditional_context, context, latent, Tensor([timestep]), alphas[tid], alphas_prev[tid], Tensor([guidance]), 1.0)
-            while (not latent.numpy().any()):
-                print("latent: ", latent.numpy().max())
-            print(latent.numpy())
-            if timing: Device[Device.DEFAULT].synchronize()
-    del run
+# with Context(BEAM=getenv("LATEBEAM")):
+for index, timestep in (t:=tqdm(list(enumerate(timesteps))[::-1])):
+    GlobalCounters.reset()
+    t.set_description("%3d %3d" % (index, timestep))
+    with Timing("step in ", enabled=timing, on_exit=lambda _: f", using {GlobalCounters.mem_used/1e9:.2f} GB"):
+        tid = Tensor([index])
+        run(model, canny_condition, unconditional_context, context, latent, Tensor([timestep]), alphas[tid], alphas_prev[tid], Tensor([guidance]), 1.0)
+        if timing: Device[Device.DEFAULT].synchronize()
+del run
     
 x = model.decode(latent).numpy()
 x = np.uint8(np.round(x))
@@ -103,8 +100,3 @@ x_image.save("debug.png")
 plt.figure(figsize=(10, 10))
 plt.imshow(x_image)
 plt.show()
-
-    #   # # HACK================================
-    #   debug_tensor = v.lazydata.realized.toCPU()
-    #   v.assign(state_dict[k].to(v.device)).realize()       
-    #   # ====================================

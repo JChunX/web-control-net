@@ -1,4 +1,6 @@
-accelerate
+opencv-python
+pillow
 diffusers
 transformers
 matplotlib
+wgpu
