@@ -46,10 +46,9 @@ model = ControlledStableDiffusion(diffusion_model, controlnet)
 
 
 # CLIP etc.
-
 prompt = "a painting of a cat"
 seed = 42
-steps = 20
+steps = 5
 
 tokenizer = ClipTokenizer()
 prompt = Tensor([tokenizer.encode(prompt)])
@@ -90,9 +89,8 @@ with Context(BEAM=getenv("LATEBEAM")):
         with Timing("step in ", enabled=timing, on_exit=lambda _: f", using {GlobalCounters.mem_used/1e9:.2f} GB"):
             tid = Tensor([index])
             latent = run(model, canny_condition, unconditional_context, context, latent, Tensor([timestep]), alphas[tid], alphas_prev[tid], Tensor([guidance]), 1.0)
-            while (not latent.numpy().any()):
+            while (not latent.numpy().any() or (np.isnan(latent.numpy()).any())):
                 print("latent: ", latent.numpy().max())
-            print(latent.numpy())
             if timing: Device[Device.DEFAULT].synchronize()
     del run
     
@@ -103,8 +101,3 @@ x_image.save("debug.png")
 plt.figure(figsize=(10, 10))
 plt.imshow(x_image)
 plt.show()
-
-    #   # # HACK================================
-    #   debug_tensor = v.lazydata.realized.toCPU()
-    #   v.assign(state_dict[k].to(v.device)).realize()       
-    #   # ====================================
