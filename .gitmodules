@@ -3,4 +3,4 @@
 	url = https://github.com/mithril-security/tokenizers-wasm
 [submodule "tinygrad"]
 	path = tinygrad
-	url = https://github.com/JChunX/tinygrad
+	url = https://github.com/JChunX/tinygrad/tree/web-control-net
