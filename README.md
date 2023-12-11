@@ -1,10 +1,10 @@
 # control.net
 
-![](./img/cn_canny_in_out.png)
-
 ![](./img/cn_scribble_in_out.png)
 
-By [Zhiyu Lei](), [Gene Liu](), and [Jason Xie]()
+![](./img/cn_canny_in_out.png)
+
+By [Zhiyu Lei](https://www.linkedin.com/in/zhiyu-lei/), [Gene Liu](https://www.linkedin.com/in/gene-l-3108641a3/), and [Jason Xie](https://www.jchunx.dev)
 
 This is an implementation of [ControlNet](https://github.com/lllyasviel/ControlNet) in the browser powered by WebGPU. It includes support for the Canny edge and scribble constraint image variants.
 
@@ -68,17 +68,22 @@ A common optimization for machine learning models is to reduce the precision wit
 
 Floating point overflow was an issue that arose during this optimization. While the model weights themselves never exceeded the range of 16 bit floating point numbers(the max being around 50,000), several layers of weight operations with intermediate values would eventually produce values that overflow the float16 range. An attempt to subvert this included downscaling all inputs and upscaling the outputs by some constant factor.
 
-In the future, more distinction can be made between different components of the model. For example, the authors of CLIP, the text encoder used within ControlNet, recommend using float32 to avoid accuracy loss, and so different configurations of float16 and float32 model components can be testsed to find the optimal balance between speed and accuracy.
+![float16 overflow](img/fp16_bugged.png)
+
+In the future, more distinction can be made between different components of the model. For example, the authors of CLIP, the text encoder used within ControlNet, recommend using float32 to avoid accuracy loss, and so different configurations of float16 and float32 model components can be tested to find the optimal balance between speed and accuracy.
 
 ### Flash Attention
 
 ## Performance Analysis
 
-![](graph)
+### Per step diffusion latency
+![fp32 vs. fp16](img/fp_perf.png)
+
+The graph shows that switching to a fp16 model drastically reduces the latency of the model. But fp16 model stability is left to be desired.
 
 ## Usage
 
-> Warning! This project is tested and verified to work on Chrome 120+ and MacOS due to their SoC architecture and unified memeory. Other browsers and operating systems may see differing results due to the large model weights and memory requirements.
+> Warning! This project is tested and verified to work on Chrome 120+ and Apple Silicon due to their SoC architecture and unified memeory. Other browsers and hardware may see differing results due to the large model weights and memory requirements.
 
 This project was tested with `npx`. To install `npx` run:
 
@@ -86,13 +91,13 @@ This project was tested with `npx`. To install `npx` run:
 
 To run the website locally, first clone the web control net directory within the tinygrad submodule [here](https://github.com/JChunX/tinygrad/tree/web-control-net/examples/webgpu/controlnet). Download the weight files of the model variants from the following links:
 
-[f32 canny]()
+[f32 canny](https://www.dropbox.com/scl/fi/6yhpbdqf7q9xvyhkhqg0h/net_canny.safetensors?rlkey=rz9vrb0a3gz2lvomtqbb1j6cw&dl=0)
 
-[f32 scribble]()
+[f32 scribble](https://www.dropbox.com/scl/fi/ka2gca8qwucmhi8z8ezo9/net_scribble.safetensors?rlkey=tyoo7fgen92l54i72sv14ounm&dl=0)
 
-[f16 canny]()
+[f16 canny](https://www.dropbox.com/scl/fi/uoc4c04wvjeied32mzg9z/net_f16_canny.safetensors?rlkey=g6su0zwhky07j8suhivh3gllr&dl=0)
 
-[f16 scribble]()
+[f16 scribble](https://www.dropbox.com/scl/fi/3rr6qdt0y13f1hcgl0sfs/net_f16_scribble.safetensors?rlkey=55n5g3uokgjufum0gibur5p1s&dl=0)
 
 Within the cloned directory run:
 
