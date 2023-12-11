@@ -18,7 +18,7 @@ This project is consisted of the following submodules:
 
 ### TinyGrad
 
-The tinygrad submodule contains a fork of the tinygrad deep learning framework. The module includes the custom ControlNet implementation and the dependant web control net frontend, compiler, and shaders. The core web control net code is located [here](https://github.com/JChunX/tinygrad/tree/web-control-net/examples/webgpu/controlnet). A fork is used rather than the original repository in order to ensure compatibility with tinygrad dependencies. The actual web control net can be run independentally of tinygrad, but as it is important towards the compute shader geneartion, it is included as a submodule.
+The tinygrad submodule contains a fork of the tinygrad deep learning framework. The module includes the custom [ControlNet implementation](https://github.com/JChunX/tinygrad/blob/59bb118b170a51f4276a04c158088e35830c2070/examples/controlnet.py) and the dependant web control net frontend, compiler, and shaders. The core web control net code is located [here](https://github.com/JChunX/tinygrad/tree/web-control-net/examples/webgpu/controlnet). A fork is used rather than the original repository in order to ensure compatibility with tinygrad dependencies. The actual web control net can be run independentally of tinygrad, but as it is important towards the compute shader geneartion, it is included as a submodule.
 
 ### WebGPU Flash Attention
 
