@@ -74,6 +74,8 @@ In the future, more distinction can be made between different components of the 
 
 ### Flash Attention
 
+Flash Attention is a mechanism of computing multi headed attention by breaking the input matrices into several parts in order to feed into SRAM of GPU with higher speed but limited memory. Unfortunately, WebGPU might not support SRAM, but using Flash Attention can still increase the space efficiency of computation.
+
 ## Performance Analysis
 
 ### Per step diffusion latency
