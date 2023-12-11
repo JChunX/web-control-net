@@ -1,3 +1,6 @@
-[submodule "3rdparty/tokenizers-wasm"]
-	path = 3rdparty/tokenizers-wasm
-	url = https://github.com/mithril-security/tokenizers-wasm
+[submodule "tinygrad"]
+	path = tinygrad
+	url = https://github.com/JChunX/tinygrad
+[submodule "flash-attention"]
+	path = flash-attention
+	url = https://github.com/JChunX/webgpu-compute-demo
