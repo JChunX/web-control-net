@@ -18,11 +18,11 @@ This project is consisted of the following submodules:
 
 ### TinyGrad
 
-The tinygrad submodule contains a fork of the tinygrad deep learning framework. The module includes the custom ControlNet implementation and the dependant web control net frontend, compiler, and shaders. The core web control net code is located [here](./tinygrad/examples/webgpu/controlnet/). A fork is used rather than the original repository in order to ensure compatibility with tinygrad dependencies.
+The tinygrad submodule contains a fork of the tinygrad deep learning framework. The module includes the custom ControlNet implementation and the dependant web control net frontend, compiler, and shaders. The core web control net code is located [here](https://github.com/JChunX/tinygrad/tree/cab960bb5228d744534ae4daa65d4182ed249ca2/examples/webgpu/controlnet). A fork is used rather than the original repository in order to ensure compatibility with tinygrad dependencies. The actual web control net can be run independentally of tinygrad, but as it is important towards the compute shader geneartion, it is included as a submodule.
 
 ### WebGPU Flash Attention
 
-The WebGPU flash attention module includes a custom implementation of [FlashAttention](https://arxiv.org/abs/2205.14135) in WebGPU. The implementation will be used to optimize the WebGPU ControlNet model.
+The WebGPU flash attention module includes a custom implementation of [FlashAttention](https://arxiv.org/abs/2205.14135) in WebGPU. The implementation will be used to optimize the WebGPU ControlNet model due to the several multi headed attention layers within the underlying stable diffusion, control net backbone, and text models.
 
 ## What is ControlNet?
 
@@ -44,7 +44,7 @@ Machine learning compilation (MLC) allows for machine learning models written in
 
 ### WebGPU Model Weight Loading
 
-The above step produces a set of WebGPU compute pipelines, with each compute shader requiring the matching weight buffer of the model to be loaded as input. These weight buffers are extracted from huggingface safetensors files. As these weights are quite large(~5.5 GB) and exceed the v8 JavaScript engine heap size limit, the weights are directly loaded into GPU buffers in chunks.
+The above step produces a set of WebGPU compute pipelines, with each compute shader requiring the matching weight buffer of the model to be loaded as input. These weight buffers are extracted from huggingface safetensors files. As these weights are quite large(~5.5 GB for f32 weights) and exceed the v8 JavaScript engine heap size limit, the weights are directly loaded into GPU buffers in chunks.
 
 ### Frontend
 
@@ -58,11 +58,7 @@ A simple frontend allows users to interact with the ControlNet model. [OpenCV.js
 
 ## Performance Analysis
 
-TBD
-
 ## Usage
-
-TBD
 
 ## References
 
@@ -73,3 +69,15 @@ TBD
 [Web Stable Diffusion](https://github.com/mlc-ai/web-stable-diffusion)
 
 [tinygrad](https://github.com/tinygrad/tinygrad)
+
+## Project Documents
+
+[Project Pitch](https://docs.google.com/document/d/1SE9JiwvdWxYVsqpN36UzVU4ws0QDpKga8wy8crXqA4c/edit?usp=sharing)
+
+[Milestone 1](https://docs.google.com/presentation/d/1Vf-wrlGaSTEg70Q1_Nhrf4q0B0zB16FOnlzuG_aslG8/edit?usp=sharing)
+
+[Milestone 2](https://docs.google.com/presentation/d/1DbnoB_UA1c14cnKGCzre-AEKE0ZIKlSKxsXFPUu49xU/edit?usp=sharing)
+
+[Milestone 3](https://docs.google.com/presentation/d/15Ltc72DwljB1aK2Xp6cXSzhIKfnR7CSHOmv9KKrQDtI/edit?usp=sharing)
+
+[Final Presentation]()
