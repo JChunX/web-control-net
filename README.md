@@ -60,7 +60,7 @@ The custom compiler script used to generate the WebGPU pipelines was initially w
 
 To reduce this overhead the encoding was combined into a singular dispatch within a longer compute pass. This enabled higher GPU uptime and less overhead in the overall model execution pass, reducing general runtimes.
 
-Note that this optimization is not included within the final model due to the instability of long passes in WebGPU corrupting input and intermediary data. After getting in contact with the WebGPU team it seems that this issue could be due to an internal WebGPU mismanagement of internal barriers creating race conditions on GPU buffer reading and writing.
+Note that this optimization is not included within the final model due to the instability of long passes in WebGPU corrupting input and intermediary data. After getting in contact with the WebGPU team it seems that this issue could be due to a WebGPU mismanagement of internal barriers creating race conditions on GPU buffer reading and writing.
 
 ### F16 Model Weights and Inputs
 
@@ -78,7 +78,7 @@ In the future, more distinction can be made between different components of the 
 
 ## Usage
 
-> Warning! This project is tested and verified to work on Chrome 120+ and MacOS due to their SoC architecture. Other browsers and operating systems may see differing results.
+> Warning! This project is tested and verified to work on Chrome 120+ and MacOS due to their SoC architecture and unified memeory. Other browsers and operating systems may see differing results due to the large model weights and memory requirements.
 
 This project was tested with `npx`. To install `npx` run:
 
